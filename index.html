@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>定窑瓷器数字档案</title>
+  <link rel="stylesheet" href="style.css?v=20241103b" />
+  <!-- ECharts CDN（后续用于地图图表） -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+  <!-- marked.js CDN（Markdown 渲染） -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+</head>
+<body>
+  <!-- 全局加载遮罩 -->
+  <div class="loading-overlay" id="loading-overlay">
+    <div class="loading-box">
+      <div class="loading-spinner"></div>
+      <p class="loading-text">正在加载数字档案，请稍候…</p>
+    </div>
+  </div>
+
+  <header class="site-header">
+    <h1 class="site-title">定窑瓷器数字档案</h1>
+    <button class="btn-enter" id="toggle-data-btn" type="button">查看数据整理</button>
+  </header>
+
+  <!-- 视图 1：首页（列表 / 卡片双视图） -->
+  <main class="site-view" id="site-view">
+    <div class="home-search">
+      <input id="home-search-input" type="text" placeholder="搜索名称、器类、遗址、年代等任意关键词" autocomplete="off" />
+    </div>
+    <div class="view-toggle">
+      <button class="toggle-btn active" id="list-view-btn" type="button">列表视图</button>
+      <button class="toggle-btn" id="card-view-btn" type="button">卡片视图</button>
+    </div>
+
+    <div class="list-view" id="list-view">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>国家级</th>
+              <th>省</th>
+              <th>市</th>
+              <th>遗址</th>
+              <th>器类</th>
+              <th>年代</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="cards-view" id="cards-view" hidden>
+      <div class="cards-container" id="home-cards-container"></div>
+    </div>
+
+    <div class="pagination" id="home-pagination" hidden>
+      <button class="btn-page" id="home-prev" type="button">上一页</button>
+      <span class="page-info" id="home-page-info"></span>
+      <button class="btn-page" id="home-next" type="button">下一页</button>
+      <span class="page-jump">
+        跳至 <input type="number" id="page-jump-input" min="1" value="1" /> 页
+        <button class="btn-page" id="page-jump-btn" type="button">跳转</button>
+      </span>
+    </div>
+  </main>
+
+  <!-- 视图 3：数据整理 -->
+  <section class="data-view" id="data-view" hidden>
+    <h2 class="data-view-title">数据整理</h2>
+    <div class="charts-grid">
+      <div class="chart-panel chart-panel--wide">
+        <h3>出土位置分布</h3>
+        <p class="chart-hint">（点越大，出土数量越多；点击点可查看该遗址瓷器）</p>
+        <div class="map-wrap">
+          <div class="map-switch">
+            <button class="map-switch-btn active" id="map-world-btn" type="button">世界</button>
+            <button class="map-switch-btn" id="map-china-btn" type="button">中国</button>
+          </div>
+          <div id="location-chart" class="chart chart-map"></div>
+        </div>
+      </div>
+      <div class="chart-panel">
+        <h3>器类分布 Top 25</h3>
+        <div id="category-chart" class="chart"></div>
+      </div>
+      <div class="chart-panel">
+        <h3>年代甘特图</h3>
+        <div id="year-chart" class="chart chart-gantt"></div>
+      </div>
+      <div class="charts-row">
+        <div class="chart-panel">
+          <h3>釉色分布</h3>
+          <div id="glaze-chart" class="chart"></div>
+        </div>
+        <div class="chart-panel">
+          <h3>胎色分布</h3>
+          <div id="body-color-chart" class="chart"></div>
+        </div>
+      </div>
+      <div class="charts-row">
+        <div class="chart-panel">
+          <h3>装饰分布图</h3>
+          <div id="technique-chart" class="chart"></div>
+        </div>
+        <div class="chart-panel">
+          <h3>器物来源 Top 5</h3>
+          <div id="top-sites-chart" class="chart"></div>
+        </div>
+      </div>
+    </div>
+    <button class="btn-back" id="back-btn" type="button">返回遗址列表</button>
+  </section>
+
+  <!-- 卡片详情弹窗 -->
+  <div class="modal-overlay" id="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <button class="modal-close" id="modal-close" type="button" aria-label="关闭">×</button>
+      <div class="modal-body">
+        <div class="modal-left">
+          <h3 class="modal-panel-title">文献内容</h3>
+          <div class="modal-md-text" id="modal-md-text"></div>
+        </div>
+        <div class="modal-right">
+          <h3 class="modal-panel-title" id="modal-title">详情</h3>
+          <div class="modal-image" id="modal-image"></div>
+          <div class="modal-sections" id="modal-sections"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
