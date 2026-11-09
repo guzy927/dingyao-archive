@@ -43,8 +43,9 @@
               <th>省</th>
               <th>市</th>
               <th>遗址</th>
+              <th>性质</th>
               <th>器类</th>
-              <th>年代</th>
+              <th id="period-th" class="sortable" title="点击切换年代排序">年代<span class="sort-arrow" id="period-sort-arrow">↕</span></th>
               <th>操作</th>
             </tr>
           </thead>
@@ -54,6 +55,18 @@
     </div>
 
     <div class="cards-view" id="cards-view" hidden>
+      <div class="card-filter-bar">
+        <select class="filter-select" id="filter-dimension">
+          <option value="category">器形</option>
+          <option value="body_color">胎色</option>
+          <option value="glaze_color">釉色</option>
+          <option value="period">年代</option>
+          <option value="nature">性质</option>
+        </select>
+        <select class="filter-select" id="filter-value">
+          <option value="">全部</option>
+        </select>
+      </div>
       <div class="cards-container" id="home-cards-container"></div>
     </div>
 
@@ -80,7 +93,20 @@
             <button class="map-switch-btn active" id="map-world-btn" type="button">世界</button>
             <button class="map-switch-btn" id="map-china-btn" type="button">中国</button>
           </div>
+          <div class="map-nature-filter">
+            <select class="map-nature-select" id="map-nature-select">
+              <option value="">全部</option>
+            </select>
+          </div>
           <div id="location-chart" class="chart chart-map"></div>
+        </div>
+        <div class="map-timeline" id="map-timeline">
+          <button class="map-timeline-node active" data-period="全部" type="button">全部</button>
+          <button class="map-timeline-node" data-period="唐五代" type="button">唐五代</button>
+          <button class="map-timeline-node" data-period="北宋" type="button">北宋</button>
+          <button class="map-timeline-node" data-period="南宋" type="button">南宋</button>
+          <button class="map-timeline-node" data-period="金" type="button">金</button>
+          <button class="map-timeline-node" data-period="元" type="button">元</button>
         </div>
       </div>
       <div class="chart-panel">

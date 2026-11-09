@@ -25,6 +25,10 @@ const pageJumpInput = document.getElementById('page-jump-input');
 const pageJumpBtn = document.getElementById('page-jump-btn');
 const mapWorldBtn = document.getElementById('map-world-btn');
 const mapChinaBtn = document.getElementById('map-china-btn');
+const periodTh = document.getElementById('period-th');
+const periodSortArrow = document.getElementById('period-sort-arrow');
+const filterDim = document.getElementById('filter-dimension');
+const filterValueSel = document.getElementById('filter-value');
 
 let allData = [];           // 保存从 data.json 加载的全部数据
 let filteredData = [];      // 搜索过滤后的数据
@@ -39,6 +43,10 @@ let chartsRendered = false; // 图表是否已初始化
 let currentPage = 1;        // 当前页码
 let viewMode = 'list';      // 首页视图模式：list | card
 const PAGE_SIZE = 20;       // 每页条数
+let periodSortDir = null;          // 列表年代排序：null | 'asc' | 'desc'
+let searchKeyword = '';            // 当前搜索关键词
+let filterDimension = 'category';  // 卡片筛选维度
+let filterValue = '';              // 卡片筛选值（空 = 全部）
 
 // 简单的 HTML 转义，防止数据中的特殊字符破坏结构
 function escapeHtml(value) {
@@ -104,6 +112,7 @@ function renderListView(items) {
           <td>${escapeHtml(item.province || '')}</td>
           <td>${escapeHtml(item.city || '')}</td>
           <td>${escapeHtml(item.location)}</td>
+          <td>${escapeHtml(item.nature || '')}</td>
           <td>${escapeHtml(item.category)}</td>
           <td>${escapeHtml(item.period)}</td>
           <td><button class="btn-detail" type="button" data-index="${allData.indexOf(item)}">详情</button></td>
@@ -135,6 +144,7 @@ function switchView(mode) {
   cardsView.hidden = mode !== 'card';
   listViewBtn.classList.toggle('active', mode === 'list');
   cardViewBtn.classList.toggle('active', mode === 'card');
+  recomputeFilteredData();
   renderHomepage();
 }
 
@@ -165,12 +175,156 @@ function matches(item, keyword) {
   });
 }
 
-// 执行搜索（过滤 + 分页重置到第 1 页）
-function handleSearch(keyword) {
-  const kw = keyword.trim();
-  filteredData = kw ? allData.filter((item) => matches(item, kw)) : allData;
+// ============ 列表按年代排序 ============
+// 判断某条数据的年代是否"有效"（非空、非不明/未知、且能在 periodMap 中匹配）
+function isKnownPeriod(item) {
+  const key = cleanPeriod(item.period);
+  return !!key && key !== '不明' && key !== '未知' && !!periodMap[key];
+}
+
+// 获取某条数据的年代起始年份（仅用于有效年代）
+function getPeriodStartYear(item) {
+  const range = periodMap[cleanPeriod(item.period)];
+  return range ? range[0] : 9999;
+}
+
+function updatePeriodSortLabel() {
+  if (!periodSortArrow) return;
+  periodSortArrow.textContent = periodSortDir === 'asc' ? '↑' : periodSortDir === 'desc' ? '↓' : '↕';
+}
+
+function togglePeriodSort() {
+  periodSortDir = periodSortDir === 'asc' ? 'desc' : 'asc';
+  const dir = periodSortDir === 'asc' ? 1 : -1;
+  filteredData = [...filteredData].sort((a, b) => {
+    const aKnown = isKnownPeriod(a);
+    const bKnown = isKnownPeriod(b);
+    // 未知/不明/未映射的条目始终固定在最后（无论正序倒序）
+    if (aKnown !== bKnown) return aKnown ? -1 : 1;
+    if (!aKnown) return 0;
+    return (getPeriodStartYear(a) - getPeriodStartYear(b)) * dir;
+  });
   currentPage = 1;
   renderHomepage();
+  updatePeriodSortLabel();
+}
+
+// ============ 卡片视图二级联动筛选 ============
+// 器类分布图剔除的类别
+const CATEGORY_EXCLUDED = ['未知', '瓷片', '残片', '白瓷（多组合）', '出土器物组合', '白瓷（多器形）'];
+
+// 获取某维度筛选项（复用图表统计逻辑）
+function getFilterOptions(dim) {
+  switch (dim) {
+    case 'category': {
+      const all = getCategoryCounts(allData);
+      const normal = all.filter((d) => !CATEGORY_EXCLUDED.includes(d.name)).sort((a, b) => b.value - a.value);
+      const names = normal.slice(0, 25).map((d) => d.name);
+      const restSum = normal.slice(25).reduce((s, d) => s + d.value, 0)
+        + all.filter((d) => CATEGORY_EXCLUDED.includes(d.name)).reduce((s, d) => s + d.value, 0);
+      if (restSum > 0) names.push('其他器类');
+      return names;
+    }
+    case 'body_color':
+      return getBodyColorDistribution(allData).map((d) => d.name);
+    case 'glaze_color':
+      return getGlazeDistribution(allData).map((d) => d.name);
+    case 'period':
+      return getPeriodGanttData(allData).map((d) => d.name);
+    case 'nature': {
+      const set = new Set();
+      allData.forEach((item) => {
+        const v = item.nature != null ? String(item.nature).trim() : '';
+        if (v) set.add(v);
+      });
+      return Array.from(set);
+    }
+    default:
+      return [];
+  }
+}
+
+// 获取某维度的"真实大类"集合（不含"其他"）
+function getDimensionTopSet(dim) {
+  switch (dim) {
+    case 'category': {
+      const all = getCategoryCounts(allData);
+      return new Set(all.filter((d) => !CATEGORY_EXCLUDED.includes(d.name)).sort((a, b) => b.value - a.value).slice(0, 25).map((d) => d.name));
+    }
+    case 'body_color':
+      return new Set(getBodyColorDistribution(allData).map((d) => d.name).filter((n) => n !== '其他胎色'));
+    case 'glaze_color':
+      return new Set(getGlazeDistribution(allData).map((d) => d.name).filter((n) => n !== '其他釉色'));
+    case 'period':
+      return new Set(getPeriodGanttData(allData).map((d) => d.name));
+    case 'nature': {
+      const set = new Set();
+      allData.forEach((item) => {
+        const v = item.nature != null ? String(item.nature).trim() : '';
+        if (v) set.add(v);
+      });
+      return set;
+    }
+    default:
+      return new Set();
+  }
+}
+
+// 将某条数据映射到某维度的大分类（与图表一致）
+function categoryOfDim(item, dim, topSet) {
+  switch (dim) {
+    case 'category':
+      if (CATEGORY_EXCLUDED.includes(item.category) || !topSet.has(item.category)) return '其他器类';
+      return item.category;
+    case 'body_color':
+      if (!item.body_color || item.body_color === '不明') return '';
+      return topSet.has(item.body_color) ? item.body_color : '其他胎色';
+    case 'glaze_color':
+      if (!item.glaze_color || item.glaze_color === '不明') return '';
+      return topSet.has(item.glaze_color) ? item.glaze_color : '其他釉色';
+    case 'period':
+      return cleanPeriod(item.period);
+    case 'nature':
+      return item.nature != null ? String(item.nature).trim() : '';
+    default:
+      return '';
+  }
+}
+
+// 重新计算 filteredData（搜索 + 卡片筛选）
+function recomputeFilteredData() {
+  let result = allData;
+  if (searchKeyword) {
+    result = result.filter((item) => matches(item, searchKeyword));
+  }
+  if (viewMode === 'card' && filterValue) {
+    const topSet = getDimensionTopSet(filterDimension);
+    result = result.filter((item) => categoryOfDim(item, filterDimension, topSet) === filterValue);
+  }
+  filteredData = result;
+}
+
+// 应用搜索 + 卡片筛选，重置到第一页并渲染
+function applyAllFilters() {
+  recomputeFilteredData();
+  currentPage = 1;
+  renderHomepage();
+}
+
+// 更新第二个下拉框选项
+function updateFilterValueOptions() {
+  const options = getFilterOptions(filterDimension);
+  filterValueSel.innerHTML = '<option value="">全部</option>'
+    + options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+  filterValueSel.value = filterValue;
+}
+
+// 执行搜索（过滤 + 分页重置到第 1 页）
+function handleSearch(keyword) {
+  searchKeyword = keyword.trim();
+  periodSortDir = null;
+  updatePeriodSortLabel();
+  applyAllFilters();
 }
 
 // 通过 fetch 读取 data.json
@@ -184,10 +338,11 @@ async function loadCards() {
     allData = await response.json();
     filteredData = allData;
     currentPage = 1;
+    updateFilterValueOptions();
     renderHomepage();
     showSiteView();
   } catch (error) {
-    tableBody.innerHTML = `<tr><td colspan="7" class="error">数据加载失败：${escapeHtml(error.message)}</td></tr>`;
+    tableBody.innerHTML = `<tr><td colspan="8" class="error">数据加载失败：${escapeHtml(error.message)}</td></tr>`;
   } finally {
     loadingOverlay.hidden = true;
   }
@@ -272,7 +427,12 @@ function getLocationStats(data) {
   data.forEach((item) => {
     const key = item.location || '未知';
     if (!map[key]) {
-      map[key] = { name: key, lng: null, lat: null, real: false, count: 0, country: item.country || '' };
+      map[key] = {
+        name: key, lng: null, lat: null, real: false, count: 0,
+        country: item.country || '',
+        nature: item.nature || '',
+        period: getPeriodLabel(cleanPeriod(item.period)),
+      };
     }
     map[key].count += 1;
     if (map[key].real) return; // 已锁定真实坐标
@@ -293,7 +453,7 @@ function getLocationStats(data) {
 
   return Object.values(map)
     .filter((s) => s.lng != null)
-    .map((s) => ({ name: s.name, lng: s.lng, lat: s.lat, count: s.count, country: s.country }));
+    .map((s) => ({ name: s.name, lng: s.lng, lat: s.lat, count: s.count, country: s.country, nature: s.nature, period: s.period }));
 }
 
 // 历史区间映射字典（完整 62 项，绝不遗漏）
@@ -548,18 +708,61 @@ async function loadChinaMap() {
   throw new Error('无法加载中国地图数据，请检查网络');
 }
 
-// 地图视图状态：'world' | 'china'
-let mapView = 'world';
-let mapAllStats = [];
-let mapChinaStats = [];
+// 地图状态
+let mapView = 'world';        // world | china
+let mapChinaStats = [];       // 中国数据（用于边界叠加判断）
+let currentNature = '';       // 当前性质筛选（空 = 全部；选项动态提取）
+let currentPeriod = '全部';    // 全部 | 唐五代 | 北宋 | 南宋 | 金 | 元
 
-// 应用地图视图（世界 / 中国）
-function applyMapView(view) {
-  mapView = view;
+// 核心年代（时间轴节点）
+const PERIOD_LIST = ['唐五代', '北宋', '南宋', '金', '元'];
+
+// 颜色：生产（窑址）=红色系，消费（流通地）=蓝色系，按年代深浅（早→晚由浅到深）
+const PRODUCTION_COLORS = {
+  '唐五代': '#f2c4c4', '北宋': '#e09090', '南宋': '#cc5b5b', '金': '#a83232', '元': '#6b1515',
+};
+const CONSUMPTION_COLORS = {
+  '唐五代': '#c4d9e6', '北宋': '#90b8d9', '南宋': '#5b8cc4', '金': '#38639e', '元': '#1a3a6b',
+};
+const OTHER_COLORS = {
+  '唐五代': '#b8c4c4', '北宋': '#9aacac', '南宋': '#7d9494', '金': '#5e7a7a', '元': '#48605f',
+};
+
+function getScatterColor(nature, period) {
+  const n = nature || '';
+  if (n.includes('生产')) return PRODUCTION_COLORS[period] || '#b85c5c';
+  if (n.includes('消费')) return CONSUMPTION_COLORS[period] || '#4a6b8c';
+  return OTHER_COLORS[period] || '#6f9eaf';
+}
+
+// 根据清洗后的年代标签判定所属年代（复用 periodMap 的 key，前缀匹配起始朝代）
+function getPeriodLabel(key) {
+  if (!key || key === '不明' || key === '未知') return '未分类';
+  if (key.startsWith('元')) return '元';
+  if (key.startsWith('辽')) return '北宋';  // 辽并入北宋
+  if (key.startsWith('金') || key.startsWith('宋金')) return '金';
+  if (key.startsWith('南宋')) return '南宋';
+  if (key.startsWith('北宋') || key.startsWith('宋')) return '北宋';
+  if (key.startsWith('唐') || key.startsWith('五代') || key.startsWith('隋') || key.startsWith('南唐') || key.startsWith('十国') || key.startsWith('北朝')) return '唐五代';
+  return '未分类';
+}
+
+// 根据视图 + 性质 + 年代过滤数据，聚合成散点
+function getMapScatterData(view) {
+  let items = allData;
+  if (view === 'china') items = items.filter((item) => item.country === '中国');
+  if (currentNature) items = items.filter((item) => item.nature === currentNature);
+  if (currentPeriod !== '全部') items = items.filter((item) => getPeriodLabel(cleanPeriod(item.period)) === currentPeriod);
+  return getLocationStats(items);
+}
+
+// 统一更新地图（世界/中国 + 性质 + 年代）
+function updateMap(view) {
+  if (view != null) mapView = view;
   if (!locationChart) return;
 
-  const isChina = view === 'china';
-  const stats = isChina ? mapChinaStats : mapAllStats;
+  const isChina = mapView === 'china';
+  const stats = getMapScatterData(mapView);
 
   // 世界视图叠加中国省份边界；中国视图直接用 china 地图本身展示省份边界
   const series = [];
@@ -590,13 +793,14 @@ function applyMapView(view) {
     data: stats.map((s) => ({
       name: s.name,
       value: [s.lng, s.lat, s.count],
+      nature: s.nature,
+      period: s.period,
     })),
     symbolSize: (value) => Math.min(12, 8 + value[2] * 0.5),
-    itemStyle: { color: '#317a7d' },
-    emphasis: {
-      scale: true,
-      itemStyle: { color: '#d97736' },
+    itemStyle: {
+      color: (params) => getScatterColor(params.data.nature, params.data.period),
     },
+    emphasis: { scale: true, itemStyle: { color: '#d97736' } },
     label: { show: false },
     zlevel: 2,
   });
@@ -607,7 +811,9 @@ function applyMapView(view) {
         trigger: 'item',
         formatter: (params) => {
           if (params.seriesType === 'scatter' || params.seriesType === 'effectScatter') {
-            return `${params.name}<br/>出土数量：${params.value[2]}`;
+            const nature = (params.data && params.data.nature) || '未分类';
+            const period = (params.data && params.data.period) || '未分类';
+            return `遗址：${params.name}<br/>性质：${nature}<br/>所属年代：${period}`;
           }
           return params.name;
         },
@@ -633,6 +839,18 @@ function applyMapView(view) {
   );
 }
 
+// 动态生成性质下拉选项（遍历 allData 提取真实值，前面保留「全部」）
+function populateNatureSelect() {
+  if (!natureSelect) return;
+  const set = new Set();
+  allData.forEach((item) => {
+    const v = item.nature != null ? String(item.nature).trim() : '';
+    if (v) set.add(v);
+  });
+  natureSelect.innerHTML = '<option value="">全部</option>'
+    + Array.from(set).map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+}
+
 // 地图散点图：出土位置分布（世界 / 中国视图切换）
 async function renderLocationChart() {
   const el = document.getElementById('location-chart');
@@ -649,11 +867,11 @@ async function renderLocationChart() {
       // 忽略，中国视图将不可用
     }
 
-    mapAllStats = getLocationStats(allData);
-    mapChinaStats = mapAllStats.filter((s) => s.country === '中国');
+    mapChinaStats = getLocationStats(allData).filter((s) => s.country === '中国');
 
     locationChart = echarts.init(el);
-    applyMapView(mapView);
+    populateNatureSelect();
+    updateMap(mapView);
   } catch (error) {
     el.innerHTML = `<p class="error">地图加载失败：${escapeHtml(error.message)}</p>`;
   }
@@ -664,12 +882,34 @@ if (mapWorldBtn && mapChinaBtn) {
   mapWorldBtn.addEventListener('click', () => {
     mapWorldBtn.classList.add('active');
     mapChinaBtn.classList.remove('active');
-    applyMapView('world');
+    updateMap('world');
   });
   mapChinaBtn.addEventListener('click', () => {
     mapChinaBtn.classList.add('active');
     mapWorldBtn.classList.remove('active');
-    applyMapView('china');
+    updateMap('china');
+  });
+}
+
+// 性质筛选（左上角下拉框）
+const natureSelect = document.getElementById('map-nature-select');
+if (natureSelect) {
+  natureSelect.addEventListener('change', () => {
+    currentNature = natureSelect.value;
+    updateMap();
+  });
+}
+
+// 底部时间轴（年代）
+const timeline = document.getElementById('map-timeline');
+if (timeline) {
+  timeline.addEventListener('click', (event) => {
+    const btn = event.target.closest('.map-timeline-node');
+    if (!btn) return;
+    timeline.querySelectorAll('.map-timeline-node').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentPeriod = btn.dataset.period;
+    updateMap();
   });
 }
 
@@ -1367,6 +1607,25 @@ homeCardsContainer.addEventListener('keydown', (event) => {
   card.classList.toggle('flipped');
   card.setAttribute('aria-pressed', String(card.classList.contains('flipped')));
 });
+
+// 列表年代列点击排序
+if (periodTh) {
+  periodTh.addEventListener('click', togglePeriodSort);
+}
+
+// 卡片视图二级联动筛选
+if (filterDim && filterValueSel) {
+  filterDim.addEventListener('change', () => {
+    filterDimension = filterDim.value;
+    filterValue = '';
+    updateFilterValueOptions();
+    applyAllFilters();
+  });
+  filterValueSel.addEventListener('change', () => {
+    filterValue = filterValueSel.value;
+    applyAllFilters();
+  });
+}
 
 // 启动加载
 loadCards();

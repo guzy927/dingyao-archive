@@ -167,6 +167,46 @@ body {
   color: var(--card-bg);
 }
 
+/* 列表可排序列 */
+.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortable:hover {
+  color: var(--accent-color);
+}
+
+.sort-arrow {
+  font-size: 0.8em;
+  margin-left: 2px;
+  color: var(--accent-color);
+}
+
+/* 卡片视图二级联动筛选栏 */
+.card-filter-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.filter-select {
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.3s ease;
+}
+
+.filter-select:focus {
+  border-color: var(--accent-color);
+}
+
 /* ---------- 加载 / 错误提示 ---------- */
 .loading,
 .error {
@@ -367,6 +407,82 @@ body {
   background: var(--accent-color);
   border-color: var(--accent-color);
   color: var(--card-bg);
+}
+
+.map-nature-filter {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+}
+
+.map-nature-select {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  color: var(--text-main);
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+}
+
+.map-nature-select:focus {
+  border-color: var(--accent-color);
+}
+
+.map-timeline {
+  display: flex;
+  align-items: center;
+  position: relative;
+  margin-top: 16px;
+  padding: 0 8px;
+}
+
+.map-timeline::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: var(--border-color);
+}
+
+.map-timeline-node {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  transition: color 0.3s ease;
+}
+
+.map-timeline-node::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--card-bg);
+  border: 2px solid var(--border-color);
+}
+
+.map-timeline-node.active {
+  color: var(--accent-color);
+  font-weight: 700;
+}
+
+.map-timeline-node.active::before {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
 }
 
 .btn-back {
