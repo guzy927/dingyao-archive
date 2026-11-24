@@ -6,9 +6,9 @@
   <title>定窑瓷器数字档案</title>
   <link rel="stylesheet" href="style.css?v=20241103b" />
   <!-- ECharts CDN（后续用于地图图表） -->
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
   <!-- marked.js CDN（Markdown 渲染） -->
-  <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
 </head>
 <body>
   <!-- 全局加载遮罩 -->
@@ -20,18 +20,22 @@
   </div>
 
   <header class="site-header">
-    <h1 class="site-title">定窑瓷器数字档案</h1>
-    <button class="btn-enter" id="toggle-data-btn" type="button">查看数据整理</button>
+    <div class="site-header-inner">
+      <h1 class="site-title">定窑瓷器数字档案</h1>
+      <button class="btn-enter" id="toggle-data-btn" type="button">查看数据整理</button>
+    </div>
   </header>
 
   <!-- 视图 1：首页（列表 / 卡片双视图） -->
   <main class="site-view" id="site-view">
-    <div class="home-search">
-      <input id="home-search-input" type="text" placeholder="搜索名称、器类、遗址、年代等任意关键词" autocomplete="off" />
-    </div>
-    <div class="view-toggle">
-      <button class="toggle-btn active" id="list-view-btn" type="button">列表视图</button>
-      <button class="toggle-btn" id="card-view-btn" type="button">卡片视图</button>
+    <div class="home-toolbar">
+      <div class="home-search">
+        <input id="home-search-input" type="text" placeholder="搜索名称、器类、遗址、年代等任意关键词" autocomplete="off" />
+      </div>
+      <div class="view-toggle">
+        <button class="toggle-btn active" id="list-view-btn" type="button">列表视图</button>
+        <button class="toggle-btn" id="card-view-btn" type="button">卡片视图</button>
+      </div>
     </div>
 
     <div class="list-view" id="list-view">
@@ -43,8 +47,9 @@
               <th>省</th>
               <th>市</th>
               <th>遗址</th>
+              <th>性质</th>
               <th>器类</th>
-              <th>年代</th>
+              <th id="period-th" class="sortable" title="点击切换年代排序">年代<span class="sort-arrow" id="period-sort-arrow">↕</span></th>
               <th>操作</th>
             </tr>
           </thead>
@@ -54,6 +59,18 @@
     </div>
 
     <div class="cards-view" id="cards-view" hidden>
+      <div class="card-filter-bar">
+        <select class="filter-select" id="filter-dimension">
+          <option value="category">器形</option>
+          <option value="body_color">胎色</option>
+          <option value="glaze_color">釉色</option>
+          <option value="period">年代</option>
+          <option value="nature">性质</option>
+        </select>
+        <select class="filter-select" id="filter-value">
+          <option value="">全部</option>
+        </select>
+      </div>
       <div class="cards-container" id="home-cards-container"></div>
     </div>
 
@@ -80,7 +97,20 @@
             <button class="map-switch-btn active" id="map-world-btn" type="button">世界</button>
             <button class="map-switch-btn" id="map-china-btn" type="button">中国</button>
           </div>
+          <div class="map-nature-filter">
+            <select class="map-nature-select" id="map-nature-select">
+              <option value="">全部</option>
+            </select>
+          </div>
           <div id="location-chart" class="chart chart-map"></div>
+        </div>
+        <div class="map-timeline" id="map-timeline">
+          <button class="map-timeline-node active" data-period="全部" type="button">全部</button>
+          <button class="map-timeline-node" data-period="唐五代" type="button">唐五代</button>
+          <button class="map-timeline-node" data-period="北宋" type="button">北宋</button>
+          <button class="map-timeline-node" data-period="南宋" type="button">南宋</button>
+          <button class="map-timeline-node" data-period="金" type="button">金</button>
+          <button class="map-timeline-node" data-period="元" type="button">元</button>
         </div>
       </div>
       <div class="chart-panel">
@@ -121,7 +151,7 @@
       <button class="modal-close" id="modal-close" type="button" aria-label="关闭">×</button>
       <div class="modal-body">
         <div class="modal-left">
-          <h3 class="modal-panel-title">文献内容</h3>
+          <h3 class="modal-panel-title">文献原文</h3>
           <div class="modal-md-text" id="modal-md-text"></div>
         </div>
         <div class="modal-right">
@@ -133,6 +163,7 @@
     </div>
   </div>
 
-  <script src="script.js"></script>
+  <script src="offline-data.js"></script>
+  <script src="script.js?v=20261124f"></script>
 </body>
 </html>

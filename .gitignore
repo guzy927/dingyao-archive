@@ -1,0 +1,11 @@
+# Large source corpus is bundled into offline_references/ for the website.
+references/
+
+# Generated reports and local agent state.
+outputs/
+.continue/
+.edge-*/
+
+# Local verification artifacts.
+_verify.txt
+offline-file-test.png

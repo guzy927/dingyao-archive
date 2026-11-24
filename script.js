@@ -25,6 +25,10 @@ const pageJumpInput = document.getElementById('page-jump-input');
 const pageJumpBtn = document.getElementById('page-jump-btn');
 const mapWorldBtn = document.getElementById('map-world-btn');
 const mapChinaBtn = document.getElementById('map-china-btn');
+const periodTh = document.getElementById('period-th');
+const periodSortArrow = document.getElementById('period-sort-arrow');
+const filterDim = document.getElementById('filter-dimension');
+const filterValueSel = document.getElementById('filter-value');
 
 let allData = [];           // 保存从 data.json 加载的全部数据
 let filteredData = [];      // 搜索过滤后的数据
@@ -39,6 +43,10 @@ let chartsRendered = false; // 图表是否已初始化
 let currentPage = 1;        // 当前页码
 let viewMode = 'list';      // 首页视图模式：list | card
 const PAGE_SIZE = 20;       // 每页条数
+let periodSortDir = null;          // 列表年代排序：null | 'asc' | 'desc'
+let searchKeyword = '';            // 当前搜索关键词
+let filterDimension = 'category';  // 卡片筛选维度
+let filterValue = '';              // 卡片筛选值（空 = 全部）
 
 // 简单的 HTML 转义，防止数据中的特殊字符破坏结构
 function escapeHtml(value) {
@@ -104,6 +112,7 @@ function renderListView(items) {
           <td>${escapeHtml(item.province || '')}</td>
           <td>${escapeHtml(item.city || '')}</td>
           <td>${escapeHtml(item.location)}</td>
+          <td>${escapeHtml(item.nature || '')}</td>
           <td>${escapeHtml(item.category)}</td>
           <td>${escapeHtml(item.period)}</td>
           <td><button class="btn-detail" type="button" data-index="${allData.indexOf(item)}">详情</button></td>
@@ -135,6 +144,7 @@ function switchView(mode) {
   cardsView.hidden = mode !== 'card';
   listViewBtn.classList.toggle('active', mode === 'list');
   cardViewBtn.classList.toggle('active', mode === 'card');
+  recomputeFilteredData();
   renderHomepage();
 }
 
@@ -165,29 +175,178 @@ function matches(item, keyword) {
   });
 }
 
-// 执行搜索（过滤 + 分页重置到第 1 页）
-function handleSearch(keyword) {
-  const kw = keyword.trim();
-  filteredData = kw ? allData.filter((item) => matches(item, kw)) : allData;
+// ============ 列表按年代排序 ============
+// 判断某条数据的年代是否"有效"（非空、非不明/未知、且能在 periodMap 中匹配）
+function isKnownPeriod(item) {
+  const key = cleanPeriod(item.period);
+  return !!key && key !== '不明' && key !== '未知' && !!periodMap[key];
+}
+
+// 获取某条数据的年代起始年份（仅用于有效年代）
+function getPeriodStartYear(item) {
+  const range = periodMap[cleanPeriod(item.period)];
+  return range ? range[0] : 9999;
+}
+
+function updatePeriodSortLabel() {
+  if (!periodSortArrow) return;
+  periodSortArrow.textContent = periodSortDir === 'asc' ? '↑' : periodSortDir === 'desc' ? '↓' : '↕';
+}
+
+function togglePeriodSort() {
+  periodSortDir = periodSortDir === 'asc' ? 'desc' : 'asc';
+  const dir = periodSortDir === 'asc' ? 1 : -1;
+  filteredData = [...filteredData].sort((a, b) => {
+    const aKnown = isKnownPeriod(a);
+    const bKnown = isKnownPeriod(b);
+    // 未知/不明/未映射的条目始终固定在最后（无论正序倒序）
+    if (aKnown !== bKnown) return aKnown ? -1 : 1;
+    if (!aKnown) return 0;
+    return (getPeriodStartYear(a) - getPeriodStartYear(b)) * dir;
+  });
+  currentPage = 1;
+  renderHomepage();
+  updatePeriodSortLabel();
+}
+
+// ============ 卡片视图二级联动筛选 ============
+// 器类分布图剔除的类别
+const CATEGORY_EXCLUDED = ['未知', '瓷片', '残片', '白瓷（多组合）', '出土器物组合', '白瓷（多器形）'];
+
+// 获取某维度筛选项（复用图表统计逻辑）
+function getFilterOptions(dim) {
+  switch (dim) {
+    case 'category': {
+      const all = getCategoryCounts(allData);
+      const normal = all.filter((d) => !CATEGORY_EXCLUDED.includes(d.name)).sort((a, b) => b.value - a.value);
+      const names = normal.slice(0, 25).map((d) => d.name);
+      const restSum = normal.slice(25).reduce((s, d) => s + d.value, 0)
+        + all.filter((d) => CATEGORY_EXCLUDED.includes(d.name)).reduce((s, d) => s + d.value, 0);
+      if (restSum > 0) names.push('其他器类');
+      return names;
+    }
+    case 'body_color':
+      return getBodyColorDistribution(allData).map((d) => d.name);
+    case 'glaze_color':
+      return getGlazeDistribution(allData).map((d) => d.name);
+    case 'period':
+      return getPeriodGanttData(allData).map((d) => d.name);
+    case 'nature': {
+      const set = new Set();
+      allData.forEach((item) => {
+        const v = item.nature != null ? String(item.nature).trim() : '';
+        if (v) set.add(v);
+      });
+      return Array.from(set);
+    }
+    default:
+      return [];
+  }
+}
+
+// 获取某维度的"真实大类"集合（不含"其他"）
+function getDimensionTopSet(dim) {
+  switch (dim) {
+    case 'category': {
+      const all = getCategoryCounts(allData);
+      return new Set(all.filter((d) => !CATEGORY_EXCLUDED.includes(d.name)).sort((a, b) => b.value - a.value).slice(0, 25).map((d) => d.name));
+    }
+    case 'body_color':
+      return new Set(getBodyColorDistribution(allData).map((d) => d.name).filter((n) => n !== '其他胎色'));
+    case 'glaze_color':
+      return new Set(getGlazeDistribution(allData).map((d) => d.name).filter((n) => n !== '其他釉色'));
+    case 'period':
+      return new Set(getPeriodGanttData(allData).map((d) => d.name));
+    case 'nature': {
+      const set = new Set();
+      allData.forEach((item) => {
+        const v = item.nature != null ? String(item.nature).trim() : '';
+        if (v) set.add(v);
+      });
+      return set;
+    }
+    default:
+      return new Set();
+  }
+}
+
+// 将某条数据映射到某维度的大分类（与图表一致）
+function categoryOfDim(item, dim, topSet) {
+  switch (dim) {
+    case 'category':
+      if (CATEGORY_EXCLUDED.includes(item.category) || !topSet.has(item.category)) return '其他器类';
+      return item.category;
+    case 'body_color':
+      if (!item.body_color || item.body_color === '不明') return '';
+      return topSet.has(item.body_color) ? item.body_color : '其他胎色';
+    case 'glaze_color':
+      if (!item.glaze_color || item.glaze_color === '不明') return '';
+      return topSet.has(item.glaze_color) ? item.glaze_color : '其他釉色';
+    case 'period':
+      return cleanPeriod(item.period);
+    case 'nature':
+      return item.nature != null ? String(item.nature).trim() : '';
+    default:
+      return '';
+  }
+}
+
+// 重新计算 filteredData（搜索 + 卡片筛选）
+function recomputeFilteredData() {
+  let result = allData;
+  if (searchKeyword) {
+    result = result.filter((item) => matches(item, searchKeyword));
+  }
+  if (viewMode === 'card' && filterValue) {
+    const topSet = getDimensionTopSet(filterDimension);
+    result = result.filter((item) => categoryOfDim(item, filterDimension, topSet) === filterValue);
+  }
+  filteredData = result;
+}
+
+// 应用搜索 + 卡片筛选，重置到第一页并渲染
+function applyAllFilters() {
+  recomputeFilteredData();
   currentPage = 1;
   renderHomepage();
 }
 
-// 通过 fetch 读取 data.json
+// 更新第二个下拉框选项
+function updateFilterValueOptions() {
+  const options = getFilterOptions(filterDimension);
+  filterValueSel.innerHTML = '<option value="">全部</option>'
+    + options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+  filterValueSel.value = filterValue;
+}
+
+// 执行搜索（过滤 + 分页重置到第 1 页）
+function handleSearch(keyword) {
+  searchKeyword = keyword.trim();
+  periodSortDir = null;
+  updatePeriodSortLabel();
+  applyAllFilters();
+}
+
+// 线上与本地双击统一使用预构建数据；保留 data.json 作为开发回退。
 async function loadCards() {
   loadingOverlay.hidden = false;
   try {
-    const response = await fetch('data.json');
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    if (Array.isArray(window.__DINGYAO_DATA__)) {
+      allData = window.__DINGYAO_DATA__;
+    } else {
+      const response = await fetch('data.json');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+      allData = await response.json();
     }
-    allData = await response.json();
     filteredData = allData;
     currentPage = 1;
+    updateFilterValueOptions();
     renderHomepage();
     showSiteView();
   } catch (error) {
-    tableBody.innerHTML = `<tr><td colspan="7" class="error">数据加载失败：${escapeHtml(error.message)}</td></tr>`;
+    tableBody.innerHTML = `<tr><td colspan="8" class="error">数据加载失败：${escapeHtml(error.message)}</td></tr>`;
   } finally {
     loadingOverlay.hidden = true;
   }
@@ -272,7 +431,12 @@ function getLocationStats(data) {
   data.forEach((item) => {
     const key = item.location || '未知';
     if (!map[key]) {
-      map[key] = { name: key, lng: null, lat: null, real: false, count: 0, country: item.country || '' };
+      map[key] = {
+        name: key, lng: null, lat: null, real: false, count: 0,
+        country: item.country || '',
+        nature: item.nature || '',
+        period: getPeriodLabel(cleanPeriod(item.period)),
+      };
     }
     map[key].count += 1;
     if (map[key].real) return; // 已锁定真实坐标
@@ -293,7 +457,7 @@ function getLocationStats(data) {
 
   return Object.values(map)
     .filter((s) => s.lng != null)
-    .map((s) => ({ name: s.name, lng: s.lng, lat: s.lat, count: s.count, country: s.country }));
+    .map((s) => ({ name: s.name, lng: s.lng, lat: s.lat, count: s.count, country: s.country, nature: s.nature, period: s.period }));
 }
 
 // 历史区间映射字典（完整 62 项，绝不遗漏）
@@ -441,6 +605,17 @@ function renderCharts() {
   chartsRendered = true;
 }
 
+// 非地图图表统一使用低饱和釉色；地图散点保留原有的红蓝分类编码。
+const CHART_COLORS = {
+  text: '#6f746c',
+  main: '#2d302c',
+  border: '#d8ddd4',
+  grid: '#edf0eb',
+  accent: '#73857a',
+  area: 'rgba(115, 133, 122, 0.24)',
+  porcelain: '#fbfaf6',
+};
+
 // 柱状图：器类数量统计
 function renderCategoryChart() {
   const EXCLUDED = ['未知', '瓷片', '残片', '白瓷（多组合）', '出土器物组合', '白瓷（多器形）'];
@@ -480,14 +655,14 @@ function renderCategoryChart() {
     xAxis: {
       type: 'category',
       data: categories,
-      axisLabel: { color: '#6b7f82', interval: 0, rotate: 0, fontSize: 10 },
-      axisLine: { lineStyle: { color: '#dce6e6' } },
+      axisLabel: { color: CHART_COLORS.text, interval: 0, rotate: 0, fontSize: 10 },
+      axisLine: { lineStyle: { color: CHART_COLORS.border } },
     },
     yAxis: {
       type: 'value',
       minInterval: 1,
-      axisLabel: { color: '#6b7f82' },
-      splitLine: { lineStyle: { color: '#eef4f4' } },
+      axisLabel: { color: CHART_COLORS.text },
+      splitLine: { lineStyle: { color: CHART_COLORS.grid } },
     },
     series: [
       {
@@ -495,8 +670,8 @@ function renderCategoryChart() {
         type: 'bar',
         data: values,
         barWidth: '40%',
-        itemStyle: { color: '#6f9eaf', borderRadius: [4, 4, 0, 0] },
-        label: { show: true, position: 'top', color: '#2f3e46' },
+        itemStyle: { color: CHART_COLORS.accent, borderRadius: [4, 4, 0, 0] },
+        label: { show: true, position: 'top', color: CHART_COLORS.main },
       },
     ],
   });
@@ -548,18 +723,61 @@ async function loadChinaMap() {
   throw new Error('无法加载中国地图数据，请检查网络');
 }
 
-// 地图视图状态：'world' | 'china'
-let mapView = 'world';
-let mapAllStats = [];
-let mapChinaStats = [];
+// 地图状态
+let mapView = 'world';        // world | china
+let mapChinaStats = [];       // 中国数据（用于边界叠加判断）
+let currentNature = '';       // 当前性质筛选（空 = 全部；选项动态提取）
+let currentPeriod = '全部';    // 全部 | 唐五代 | 北宋 | 南宋 | 金 | 元
 
-// 应用地图视图（世界 / 中国）
-function applyMapView(view) {
-  mapView = view;
+// 核心年代（时间轴节点）
+const PERIOD_LIST = ['唐五代', '北宋', '南宋', '金', '元'];
+
+// 颜色：生产（窑址）=红色系，消费（流通地）=蓝色系，按年代深浅（早→晚由浅到深）
+const PRODUCTION_COLORS = {
+  '唐五代': '#f2c4c4', '北宋': '#e09090', '南宋': '#cc5b5b', '金': '#a83232', '元': '#6b1515',
+};
+const CONSUMPTION_COLORS = {
+  '唐五代': '#c4d9e6', '北宋': '#90b8d9', '南宋': '#5b8cc4', '金': '#38639e', '元': '#1a3a6b',
+};
+const OTHER_COLORS = {
+  '唐五代': '#b8c4c4', '北宋': '#9aacac', '南宋': '#7d9494', '金': '#5e7a7a', '元': '#48605f',
+};
+
+function getScatterColor(nature, period) {
+  const n = nature || '';
+  if (n.includes('生产')) return PRODUCTION_COLORS[period] || '#b85c5c';
+  if (n.includes('消费')) return CONSUMPTION_COLORS[period] || '#4a6b8c';
+  return OTHER_COLORS[period] || '#6f9eaf';
+}
+
+// 根据清洗后的年代标签判定所属年代（复用 periodMap 的 key，前缀匹配起始朝代）
+function getPeriodLabel(key) {
+  if (!key || key === '不明' || key === '未知') return '未分类';
+  if (key.startsWith('元')) return '元';
+  if (key.startsWith('辽')) return '北宋';  // 辽并入北宋
+  if (key.startsWith('金') || key.startsWith('宋金')) return '金';
+  if (key.startsWith('南宋')) return '南宋';
+  if (key.startsWith('北宋') || key.startsWith('宋')) return '北宋';
+  if (key.startsWith('唐') || key.startsWith('五代') || key.startsWith('隋') || key.startsWith('南唐') || key.startsWith('十国') || key.startsWith('北朝')) return '唐五代';
+  return '未分类';
+}
+
+// 根据视图 + 性质 + 年代过滤数据，聚合成散点
+function getMapScatterData(view) {
+  let items = allData;
+  if (view === 'china') items = items.filter((item) => item.country === '中国');
+  if (currentNature) items = items.filter((item) => item.nature === currentNature);
+  if (currentPeriod !== '全部') items = items.filter((item) => getPeriodLabel(cleanPeriod(item.period)) === currentPeriod);
+  return getLocationStats(items);
+}
+
+// 统一更新地图（世界/中国 + 性质 + 年代）
+function updateMap(view) {
+  if (view != null) mapView = view;
   if (!locationChart) return;
 
-  const isChina = view === 'china';
-  const stats = isChina ? mapChinaStats : mapAllStats;
+  const isChina = mapView === 'china';
+  const stats = getMapScatterData(mapView);
 
   // 世界视图叠加中国省份边界；中国视图直接用 china 地图本身展示省份边界
   const series = [];
@@ -590,13 +808,14 @@ function applyMapView(view) {
     data: stats.map((s) => ({
       name: s.name,
       value: [s.lng, s.lat, s.count],
+      nature: s.nature,
+      period: s.period,
     })),
     symbolSize: (value) => Math.min(12, 8 + value[2] * 0.5),
-    itemStyle: { color: '#317a7d' },
-    emphasis: {
-      scale: true,
-      itemStyle: { color: '#d97736' },
+    itemStyle: {
+      color: (params) => getScatterColor(params.data.nature, params.data.period),
     },
+    emphasis: { scale: true, itemStyle: { color: '#d97736' } },
     label: { show: false },
     zlevel: 2,
   });
@@ -607,7 +826,9 @@ function applyMapView(view) {
         trigger: 'item',
         formatter: (params) => {
           if (params.seriesType === 'scatter' || params.seriesType === 'effectScatter') {
-            return `${params.name}<br/>出土数量：${params.value[2]}`;
+            const nature = (params.data && params.data.nature) || '未分类';
+            const period = (params.data && params.data.period) || '未分类';
+            return `遗址：${params.name}<br/>性质：${nature}<br/>所属年代：${period}`;
           }
           return params.name;
         },
@@ -633,6 +854,18 @@ function applyMapView(view) {
   );
 }
 
+// 动态生成性质下拉选项（遍历 allData 提取真实值，前面保留「全部」）
+function populateNatureSelect() {
+  if (!natureSelect) return;
+  const set = new Set();
+  allData.forEach((item) => {
+    const v = item.nature != null ? String(item.nature).trim() : '';
+    if (v) set.add(v);
+  });
+  natureSelect.innerHTML = '<option value="">全部</option>'
+    + Array.from(set).map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+}
+
 // 地图散点图：出土位置分布（世界 / 中国视图切换）
 async function renderLocationChart() {
   const el = document.getElementById('location-chart');
@@ -649,11 +882,11 @@ async function renderLocationChart() {
       // 忽略，中国视图将不可用
     }
 
-    mapAllStats = getLocationStats(allData);
-    mapChinaStats = mapAllStats.filter((s) => s.country === '中国');
+    mapChinaStats = getLocationStats(allData).filter((s) => s.country === '中国');
 
     locationChart = echarts.init(el);
-    applyMapView(mapView);
+    populateNatureSelect();
+    updateMap(mapView);
   } catch (error) {
     el.innerHTML = `<p class="error">地图加载失败：${escapeHtml(error.message)}</p>`;
   }
@@ -664,12 +897,34 @@ if (mapWorldBtn && mapChinaBtn) {
   mapWorldBtn.addEventListener('click', () => {
     mapWorldBtn.classList.add('active');
     mapChinaBtn.classList.remove('active');
-    applyMapView('world');
+    updateMap('world');
   });
   mapChinaBtn.addEventListener('click', () => {
     mapChinaBtn.classList.add('active');
     mapWorldBtn.classList.remove('active');
-    applyMapView('china');
+    updateMap('china');
+  });
+}
+
+// 性质筛选（左上角下拉框）
+const natureSelect = document.getElementById('map-nature-select');
+if (natureSelect) {
+  natureSelect.addEventListener('change', () => {
+    currentNature = natureSelect.value;
+    updateMap();
+  });
+}
+
+// 底部时间轴（年代）
+const timeline = document.getElementById('map-timeline');
+if (timeline) {
+  timeline.addEventListener('click', (event) => {
+    const btn = event.target.closest('.map-timeline-node');
+    if (!btn) return;
+    timeline.querySelectorAll('.map-timeline-node').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentPeriod = btn.dataset.period;
+    updateMap();
   });
 }
 
@@ -734,11 +989,11 @@ function renderYearChart() {
         min: yearToTs(500),
         max: yearToTs(1400),
         axisLabel: {
-          color: '#6b7f82',
+          color: CHART_COLORS.text,
           formatter: (value) => `${new Date(value).getFullYear()}`,
         },
-        axisLine: { lineStyle: { color: '#dce6e6' } },
-        splitLine: { show: true, lineStyle: { color: '#eef4f4' } },
+        axisLine: { lineStyle: { color: CHART_COLORS.border } },
+        splitLine: { show: true, lineStyle: { color: CHART_COLORS.grid } },
       },
       {
         type: 'time',
@@ -747,11 +1002,11 @@ function renderYearChart() {
         min: yearToTs(500),
         max: yearToTs(1400),
         axisLabel: {
-          color: '#6b7f82',
+          color: CHART_COLORS.text,
           formatter: (value) => `${new Date(value).getFullYear()}`,
         },
-        axisLine: { lineStyle: { color: '#dce6e6' } },
-        splitLine: { show: true, lineStyle: { color: '#eef4f4' } },
+        axisLine: { lineStyle: { color: CHART_COLORS.border } },
+        splitLine: { show: true, lineStyle: { color: CHART_COLORS.grid } },
       },
     ],
     yAxis: [
@@ -760,15 +1015,15 @@ function renderYearChart() {
         gridIndex: 0,
         inverse: true,
         data: periods.map((d) => d.name),
-        axisLabel: { color: '#6b7f82' },
-        axisLine: { lineStyle: { color: '#dce6e6' } },
+        axisLabel: { color: CHART_COLORS.text },
+        axisLine: { lineStyle: { color: CHART_COLORS.border } },
       },
       {
         type: 'value',
         gridIndex: 1,
-        axisLabel: { color: '#6b7f82' },
-        axisLine: { lineStyle: { color: '#dce6e6' } },
-        splitLine: { lineStyle: { color: '#eef4f4' } },
+        axisLabel: { color: CHART_COLORS.text },
+        axisLine: { lineStyle: { color: CHART_COLORS.border } },
+        splitLine: { lineStyle: { color: CHART_COLORS.grid } },
       },
     ],
     series: [
@@ -800,7 +1055,7 @@ function renderYearChart() {
               width: x2 - x,
               height: actualHeight,
             },
-            style: { fill: '#6f9eaf' },
+            style: { fill: CHART_COLORS.accent },
           };
         },
         encode: { x: [1, 2], y: 0 },
@@ -821,17 +1076,17 @@ function renderYearChart() {
         symbol: 'circle',
         symbolSize: 4,
         showSymbol: false,
-        lineStyle: { color: '#6f9eaf', width: 2 },
-        areaStyle: { color: 'rgba(111, 158, 175, 0.25)' },
-        itemStyle: { color: '#6f9eaf' },
+        lineStyle: { color: CHART_COLORS.accent, width: 2 },
+        areaStyle: { color: CHART_COLORS.area },
+        itemStyle: { color: CHART_COLORS.accent },
         data: areaData,
       },
     ],
   });
 }
 
-// 饼图配色（青瓷色系）
-const PIE_COLORS = ['#6f9eaf', '#8fb8c6', '#5b8a99', '#a3c9c9', '#7fafb8', '#94b8b0', '#b3d4d4', '#cfe4e0'];
+// 白釉、青白釉、青釉、黑釉、酱釉与茶叶末釉的低饱和色阶。
+const PIE_COLORS = ['#d8d1bb', '#aab9b3', '#879b90', '#566159', '#7b6b5d', '#7d8068', '#c5cbc2', '#e1e3dc'];
 
 // 釉色分布：直接读取 glaze_color 原始文本统计，前 15 名 + 合并「其他釉色」
 function getGlazeDistribution(data) {
@@ -883,15 +1138,15 @@ function renderGlazeChart() {
   glazeChart = echarts.init(document.getElementById('glaze-chart'));
   glazeChart.setOption({
     tooltip: { trigger: 'item', formatter: '{b}: {c}（{d}%）' },
-    legend: { bottom: 0, textStyle: { color: '#6b7f82' } },
+    legend: { bottom: 0, textStyle: { color: CHART_COLORS.text } },
     series: [
       {
         type: 'pie',
         radius: ['38%', '62%'],
         center: ['50%', '44%'],
         data,
-        itemStyle: { borderColor: '#ffffff', borderWidth: 1 },
-        label: { color: '#2f3e46', formatter: '{b} {d}%' },
+        itemStyle: { borderColor: CHART_COLORS.porcelain, borderWidth: 1 },
+        label: { color: CHART_COLORS.main, formatter: '{b} {d}%' },
       },
     ],
     color: PIE_COLORS,
@@ -904,15 +1159,15 @@ function renderBodyColorChart() {
   bodyColorChart = echarts.init(document.getElementById('body-color-chart'));
   bodyColorChart.setOption({
     tooltip: { trigger: 'item', formatter: '{b}: {c}（{d}%）' },
-    legend: { bottom: 0, textStyle: { color: '#6b7f82' } },
+    legend: { bottom: 0, textStyle: { color: CHART_COLORS.text } },
     series: [
       {
         type: 'pie',
         radius: ['38%', '62%'],
         center: ['50%', '44%'],
         data,
-        itemStyle: { borderColor: '#ffffff', borderWidth: 1 },
-        label: { color: '#2f3e46', formatter: '{b} {d}%' },
+        itemStyle: { borderColor: CHART_COLORS.porcelain, borderWidth: 1 },
+        label: { color: CHART_COLORS.main, formatter: '{b} {d}%' },
       },
     ],
     color: PIE_COLORS,
@@ -928,7 +1183,7 @@ function renderTechniqueChart() {
     legend: {
       type: 'scroll',
       bottom: 0,
-      textStyle: { color: '#6b7f82' },
+      textStyle: { color: CHART_COLORS.text },
     },
     series: [
       {
@@ -937,8 +1192,8 @@ function renderTechniqueChart() {
         center: ['50%', '44%'],
         data,
         minShowLabelAngle: 5,
-        itemStyle: { borderColor: '#ffffff', borderWidth: 1 },
-        label: { color: '#2f3e46', formatter: '{b} {d}%' },
+        itemStyle: { borderColor: CHART_COLORS.porcelain, borderWidth: 1 },
+        label: { color: CHART_COLORS.main, formatter: '{b} {d}%' },
       },
     ],
     color: PIE_COLORS,
@@ -955,15 +1210,15 @@ function renderTopSitesChart() {
     xAxis: {
       type: 'value',
       minInterval: 1,
-      axisLabel: { color: '#6b7f82' },
-      splitLine: { lineStyle: { color: '#eef4f4' } },
+      axisLabel: { color: CHART_COLORS.text },
+      splitLine: { lineStyle: { color: CHART_COLORS.grid } },
     },
     yAxis: {
       type: 'category',
       data: data.map((d) => d.name),
       inverse: true,
-      axisLabel: { color: '#6b7f82' },
-      axisLine: { lineStyle: { color: '#dce6e6' } },
+      axisLabel: { color: CHART_COLORS.text },
+      axisLine: { lineStyle: { color: CHART_COLORS.border } },
     },
     series: [
       {
@@ -971,8 +1226,8 @@ function renderTopSitesChart() {
         type: 'bar',
         data: data.map((d) => d.value),
         barWidth: '60%',
-        itemStyle: { color: '#6f9eaf', borderRadius: [0, 4, 4, 0] },
-        label: { show: true, position: 'right', color: '#2f3e46' },
+        itemStyle: { color: CHART_COLORS.accent, borderRadius: [0, 4, 4, 0] },
+        label: { show: true, position: 'right', color: CHART_COLORS.main },
       },
     ],
   });
@@ -1095,8 +1350,47 @@ function renderMarkdown(text) {
   return html;
 }
 
-// 读取 Markdown 内容（优先 md_path 抓取 .md 文件，回退 md_text）
+const offlineReferenceLoads = new Map();
+
+function loadOfflineReference(item) {
+  const key = item.offline_reference_key;
+  const bundlePath = item.offline_reference_bundle;
+  if (!key || !bundlePath) {
+    return Promise.reject(new Error('该器物未配置离线文献包'));
+  }
+  const store = window.__DINGYAO_REFERENCE_STORE__ || {};
+  if (typeof store[key] === 'string') return Promise.resolve(store[key]);
+  if (offlineReferenceLoads.has(key)) return offlineReferenceLoads.get(key);
+
+  const promise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = bundlePath;
+    script.onload = () => {
+      script.remove();
+      const text = window.__DINGYAO_REFERENCE_STORE__?.[key];
+      if (typeof text === 'string') resolve(text);
+      else reject(new Error('离线文献包内容无效'));
+    };
+    script.onerror = () => {
+      script.remove();
+      reject(new Error(`离线文献包加载失败：${bundlePath}`));
+    };
+    document.head.appendChild(script);
+  });
+  offlineReferenceLoads.set(key, promise);
+  promise.catch(() => offlineReferenceLoads.delete(key));
+  return promise;
+}
+
+// 线上与本地双击均按需加载去重文献包；保留原始 Markdown 作为开发回退。
 async function loadMarkdown(item) {
+  if (item.offline_reference_key && item.offline_reference_bundle) {
+    try {
+      return await loadOfflineReference(item);
+    } catch (offlineError) {
+      if (window.location.protocol === 'file:') throw offlineError;
+    }
+  }
   if (item.md_path) {
     const res = await fetch(item.md_path);
     if (!res.ok) {
@@ -1115,9 +1409,15 @@ function formatDimensions(dim) {
   if (!dim || typeof dim !== 'object') return '';
   const unit = dim.unit || 'cm';
   const parts = [];
-  if (dim.height != null) parts.push(`高 ${dim.height} ${unit}`);
-  if (dim.mouth_diameter != null) parts.push(`口径 ${dim.mouth_diameter} ${unit}`);
-  if (dim.foot_diameter != null) parts.push(`足径 ${dim.foot_diameter} ${unit}`);
+  const addPart = (label, value) => {
+    const text = String(value ?? '').trim();
+    if (!text || /^(?:不明|未知|未详|无资料|[-—])$/.test(text)) return;
+    const suffix = /(?:厘米|cm)$/i.test(text) ? '' : ` ${unit}`;
+    parts.push(`${label} ${text}${suffix}`);
+  };
+  addPart('高', dim.height);
+  addPart('口径', dim.mouth_diameter);
+  addPart('足径', dim.foot_diameter);
   return parts.join('，');
 }
 
@@ -1126,48 +1426,53 @@ function renderDetailSections(item) {
   const sections = [
     {
       title: '造型与尺寸',
+      searchable: true,
       fields: [
-        ['时代', item.period],
-        ['口沿', item.mouth],
-        ['腹部', item.belly],
-        ['足部', item.foot],
-        ['整体造型', item.overall_shape],
-        ['尺寸', formatDimensions(item.dimensions)],
+        ['period', '时代', item.period],
+        ['mouth', '口沿', item.mouth],
+        ['belly', '腹部', item.belly],
+        ['foot', '足部', item.foot],
+        ['overall_shape', '整体造型', item.overall_shape],
+        ['dimensions', '尺寸', formatDimensions(item.dimensions)],
       ],
     },
     {
       title: '胎釉特征',
+      searchable: true,
       fields: [
-        ['胎质', item.body_texture],
-        ['胎色', item.body_color],
-        ['釉色', item.glaze_color],
-        ['施釉范围', item.glaze_extent],
-        ['釉面特征', item.glaze_features],
-        ['装饰', item.decoration],
+        ['body_texture', '胎质', item.body_texture],
+        ['body_color', '胎色', item.body_color],
+        ['glaze_color', '釉色', item.glaze_color],
+        ['glaze_extent', '施釉范围', item.glaze_extent],
+        ['glaze_features', '釉面特征', item.glaze_features],
+        ['decoration', '装饰', item.decoration],
       ],
     },
     {
       title: '工艺与装烧',
+      searchable: true,
       fields: [
-        ['成型工艺', item.forming],
-        ['装饰技法', item.decorating_technique],
-        ['施釉工艺', item.glazing_technique],
-        ['装烧工艺', item.firing_technique],
+        ['forming', '成型工艺', item.forming],
+        ['decorating_technique', '装饰技法', item.decorating_technique],
+        ['glazing_technique', '施釉工艺', item.glazing_technique],
+        ['firing_technique', '装烧工艺', item.firing_technique],
       ],
     },
     {
       title: '出土与保存',
+      searchable: true,
       fields: [
-        ['出土位置', item.location],
-        ['出土年份', item.year],
-        ['出土背景', item.context],
-        ['保存状况', item.condition],
+        ['location', '出土位置', item.location],
+        ['year', '出土年份', item.year],
+        ['context', '出土背景', item.context],
+        ['condition', '保存状况', item.condition],
       ],
     },
     {
       title: '参考文献',
+      searchable: false,
       fields: [
-        ['参考文献', item.bibliography],
+        ['bibliography', '参考文献', item.bibliography],
       ],
     },
   ];
@@ -1175,8 +1480,15 @@ function renderDetailSections(item) {
   return sections
     .map((section) => {
       const rows = section.fields
-        .filter(([, value]) => value != null && String(value).trim() !== '')
-        .map(([label, value]) => `<li><span class="detail-label">${label}：</span><span class="searchable-field">${escapeHtml(value)}</span></li>`)
+        .filter(([, , value]) => value != null && String(value).trim() !== '')
+        .map(([key, label, value]) => {
+          const text = String(value).trim();
+          const canSearch = section.searchable && !/^(?:不明|未知|未详|无资料|[-—])$/.test(text);
+          const field = canSearch
+            ? `<button class="searchable-field" type="button" data-field-key="${escapeHtml(key)}" data-search-value="${escapeHtml(text)}" title="在文献原文中定位">${escapeHtml(text)}</button>`
+            : `<span class="detail-value">${escapeHtml(text)}</span>`;
+          return `<li><span class="detail-label">${label}：</span>${field}</li>`;
+        })
         .join('');
       if (!rows) return '';
       return `<div class="detail-section">
@@ -1189,27 +1501,21 @@ function renderDetailSections(item) {
 
 // ============ 卡片详情弹窗 ============
 let modalRequestId = 0; // 请求序号，避免快速切换卡片时旧请求覆盖新内容
+let activeModalItem = null;
+let activeSourceMatcher = null;
 
 async function openCardModal(index) {
   const item = allData[Number(index)];
   if (!item) return;
 
   const requestId = ++modalRequestId;
+  activeModalItem = item;
+  activeSourceMatcher = null;
 
   modalTitle.textContent = item.name;
 
-  // 左侧：异步加载 Markdown 文献
+  // 先展示弹窗与器物详情，文献原文在左栏异步加载。
   modalMdText.innerHTML = '<p class="placeholder">正在加载文献…</p>';
-  try {
-    const md = await loadMarkdown(item);
-    if (requestId !== modalRequestId) return; // 过期请求，忽略
-    modalMdText.innerHTML = renderMarkdown(md);
-  } catch (error) {
-    if (requestId !== modalRequestId) return; // 过期请求，忽略
-    modalMdText.innerHTML = `<p class="error">文献加载失败：${escapeHtml(error.message)}</p>`;
-  }
-
-  // 右侧：图片
   if (item.image) {
     modalImage.innerHTML = `<img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}" />`;
   } else {
@@ -1220,9 +1526,26 @@ async function openCardModal(index) {
 
   modalOverlay.hidden = false;
   document.body.style.overflow = 'hidden';
+  modalMdText.parentElement.scrollTop = 0;
+  modalSections.parentElement.scrollTop = 0;
+
+  try {
+    const md = await loadMarkdown(item);
+    if (requestId !== modalRequestId) return; // 过期请求，忽略
+    modalMdText.innerHTML = renderMarkdown(md);
+    activeSourceMatcher = createSourceMatcherContext(item);
+    updateSearchableFieldAvailability();
+    modalMdText.parentElement.scrollTop = 0;
+  } catch (error) {
+    if (requestId !== modalRequestId) return; // 过期请求，忽略
+    modalMdText.innerHTML = `<p class="error">文献加载失败：${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function closeCardModal() {
+  modalRequestId += 1;
+  activeModalItem = null;
+  activeSourceMatcher = null;
   modalOverlay.hidden = true;
   document.body.style.overflow = '';
 }
@@ -1249,17 +1572,292 @@ document.addEventListener('error', (event) => {
   }
 }, true);
 
-// ============ 字段点击 → 文献高亮定位 ============
-// 清除上一次的高亮，将 <mark> 还原为普通文本
+// ============ 字段点击 → 文献相关段落定位 ============
+const FIELD_ALIASES = {
+  period: ['时代', '时期', '年代'],
+  mouth: ['口沿', '口部', '器口', '唇口'],
+  belly: ['腹部', '器腹', '腹'],
+  foot: ['足部', '底足', '圈足', '器底'],
+  overall_shape: ['造型', '形制', '器形'],
+  dimensions: ['高', '口径', '足径', '底径', '腹径'],
+  body_texture: ['胎质', '胎体'],
+  body_color: ['胎色'],
+  glaze_color: ['釉色', '施釉'],
+  glaze_extent: ['施釉', '满釉', '无釉', '刮釉'],
+  glaze_features: ['釉面', '开片', '积釉', '流釉'],
+  decoration: ['纹饰', '装饰', '图案'],
+  forming: ['成型', '拉坯', '模制'],
+  decorating_technique: ['装饰', '刻花', '划花', '印花'],
+  glazing_technique: ['施釉', '浸釉', '淋釉'],
+  firing_technique: ['装烧', '覆烧', '支烧', '垫烧'],
+  location: ['出土', '遗址', '墓', '窑址'],
+  year: ['出土', '年', '年代'],
+  context: ['出土', '地层', '墓葬', '窖藏'],
+  condition: ['完整', '残', '保存', '修复'],
+};
+
+function normalizeSourceText(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/靑/g, '青')
+    .replace(/厘米|cm/gi, 'cm')
+    .replace(/[—–−]/g, '-')
+    .replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+function getSearchTerms(value, fieldKey) {
+  const text = String(value || '').trim();
+  const periodTerms = fieldKey === 'period'
+    ? {
+      唐: ['唐代'], 五代: ['五代'], 辽: ['辽代'], 宋: ['宋代'], 北宋: ['北宋'],
+      南宋: ['南宋'], 金: ['金代'], 元: ['元代'], 明: ['明代'], 清: ['清代'],
+    }[text] || []
+    : [];
+  const spouseTombIndex = text.indexOf('夫妇合葬墓');
+  const domainTerms = [
+    ...(text.match(/[白青黑酱黄褐绿灰红紫]{1,4}釉/g) || []),
+    ...(text.match(/泛[白青黑黄褐绿灰红紫]{1,4}/g) || []),
+    ...(text.match(/[白青黑黄褐绿灰红紫]{1,4}胎/g) || []),
+  ];
+  const locationTerms = fieldKey === 'location'
+    ? [
+      ...text.split(/(?<=[省市区县镇乡村])/),
+      ...(spouseTombIndex >= 0 ? [text.slice(Math.max(0, spouseTombIndex - 3), spouseTombIndex + 5)] : []),
+      ...(text.match(/[一-鿿]{2,8}(?:夫妇合葬墓|合葬墓|塔基|遗址|窑址|墓)$/g) || []),
+    ]
+    : [];
+  const dimensionTerms = fieldKey === 'dimensions'
+    ? [...text.matchAll(/(高|口径|足径)\s*([^，,]+)/g)].flatMap((match) => {
+      const number = match[2].match(/\d+(?:\.\d+)?(?:\s*[~～-]\s*\d+(?:\.\d+)?)?/);
+      if (!number) return [];
+      const labels = match[1] === '足径' ? ['足径', '底径'] : [match[1]];
+      return labels.flatMap((label) => [
+        `${label}${number[0]}`,
+        `${label} ${number[0]}`,
+        `${label}${number[0]}厘米`,
+        `${label} ${number[0]}厘米`,
+      ]);
+    })
+    : [];
+  const terms = [
+    text,
+    ...periodTerms,
+    ...dimensionTerms,
+    ...text.split(/[，,、；;。（）()]+/),
+    ...domainTerms,
+    ...locationTerms,
+  ]
+    .map((term) => term.trim())
+    .filter((term) => {
+      const normalized = normalizeSourceText(term);
+      return normalized.length >= 2 && !/^(?:不明|未知|未详|无资料)$/.test(normalized);
+    });
+  return [...new Map(terms.map((term) => [normalizeSourceText(term), term])).values()]
+    .sort((a, b) => normalizeSourceText(b).length - normalizeSourceText(a).length);
+}
+
+function getStrongCodeTerms(item) {
+  if (!item) return [];
+  const source = [item.context, item.name, item.research].filter(Boolean).join(' ');
+  const codeTerms = extractCodeTermsFromText(source)
+    .map((term) => term.replace(/[:：∶.\-－]+$/g, ''))
+    .filter((term) => /[A-Za-z]/.test(term) && /\d/.test(term));
+  return [...new Map(codeTerms.map((term) => [normalizeSourceText(term), term])).values()]
+    .sort((a, b) => normalizeSourceText(b).length - normalizeSourceText(a).length);
+}
+
+function extractCodeTermsFromText(value) {
+  return String(value || '').match(/[A-Za-z0-9]+[A-Za-z0-9①-⑳⒈-⒛扩东西南北:：∶.\-－]{1,39}/g) || [];
+}
+
+function getItemFingerprintTerms(item) {
+  if (!item) return [];
+  const terms = [];
+  const source = [item.name, item.research].filter(Boolean).join(' ');
+  for (const match of source.matchAll(/[（(]([^）)]+)[）)]/g)) {
+    terms.push(...match[1].split(/[，,、；;]+/));
+  }
+  if (item.name) terms.push(item.name.replace(/[（(][^）)]+[）)]/g, '').trim());
+  [
+    item.mouth,
+    item.belly,
+    item.foot,
+    item.overall_shape,
+    formatDimensions(item.dimensions),
+    item.body_texture,
+    item.body_color,
+    item.glaze_color,
+    item.glaze_extent,
+    item.glaze_features,
+    item.decoration,
+    item.forming,
+    item.decorating_technique,
+    item.glazing_technique,
+    item.firing_technique,
+    item.condition,
+  ].forEach((value) => {
+    if (value && normalizeSourceText(value).length >= 4) terms.push(value);
+  });
+  return [...new Map(terms
+    .map((term) => [normalizeSourceText(term), String(term).trim()])
+    .filter(([normalized]) => normalized.length >= 4)).values()]
+    .sort((a, b) => normalizeSourceText(b).length - normalizeSourceText(a).length);
+}
+
+function getItemFingerprintFields(item) {
+  if (!item) return [];
+  const name = item.name ? item.name.replace(/[（(][^）)]+[）)]/g, '').trim() : '';
+  const values = {
+    name,
+    mouth: item.mouth,
+    belly: item.belly,
+    foot: item.foot,
+    overall_shape: item.overall_shape,
+    dimensions: formatDimensions(item.dimensions),
+    body_texture: item.body_texture,
+    body_color: item.body_color,
+    glaze_color: item.glaze_color,
+    glaze_extent: item.glaze_extent,
+    glaze_features: item.glaze_features,
+    decoration: item.decoration,
+    forming: item.forming,
+    decorating_technique: item.decorating_technique,
+    glazing_technique: item.glazing_technique,
+    firing_technique: item.firing_technique,
+    condition: item.condition,
+  };
+  const weights = {
+    name: 6,
+    decoration: 5,
+    dimensions: 4,
+    overall_shape: 4,
+    mouth: 3,
+    belly: 3,
+    foot: 3,
+    body_texture: 2,
+    glaze_features: 2,
+    forming: 2,
+    condition: 1,
+  };
+  return Object.entries(values)
+    .filter(([, value]) => value && !/^(?:不明|未知|未详|无资料|[-—])$/.test(String(value).trim()))
+    .map(([key, value]) => ({
+      key,
+      weight: weights[key] || 1,
+      terms: getSearchTerms(value, key)
+        .map((term) => ({ term, normalized: normalizeSourceText(term) }))
+        .filter(({ normalized }) => normalized.length >= 2),
+    }))
+    .filter((field) => field.terms.length > 0);
+}
+
+const GENERIC_FINGERPRINT_TERMS = new Set([
+  '白釉', '白胎', '灰白胎', '素面', '刻花', '划花', '印花', '覆烧', '圈足',
+  '敞口', '侈口', '弧腹', '残', '完整', '不明', '未知',
+].map(normalizeSourceText));
+
+function sourceBlocks() {
+  return [...modalMdText.querySelectorAll('p, li, tr, h1, h2, h3, h4, h5, h6')]
+    .filter((element) => normalizeSourceText(element.textContent).length >= 2);
+}
+
+function createSourceMatcherContext(item) {
+  const blocks = sourceBlocks();
+  const normalizedBlocks = blocks.map((block) => normalizeSourceText(block.textContent));
+  const codeTerms = getStrongCodeTerms(item);
+  const codeAnchors = [];
+
+  codeTerms.forEach((term) => {
+    const normalized = normalizeSourceText(term);
+    if (normalized.length < 3) return;
+    const indexes = normalizedBlocks
+      .map((text, index) => (text.includes(normalized) ? index : -1))
+      .filter((index) => index >= 0);
+    // A short prefix repeated throughout a report is not an object identifier.
+    if (indexes.length > 0 && indexes.length <= 12) {
+      indexes.forEach((index) => codeAnchors.push({ index, term, normalized }));
+    }
+  });
+
+  if (codeAnchors.length > 0) {
+    const scopeIndexes = new Set();
+    codeAnchors.forEach(({ index }) => {
+      for (let offset = -14; offset <= 14; offset += 1) {
+        const scopeIndex = index + offset;
+        if (scopeIndex >= 0 && scopeIndex < blocks.length) scopeIndexes.add(scopeIndex);
+      }
+    });
+    return {
+      blocks,
+      normalizedBlocks,
+      mode: 'code',
+      codeAnchors,
+      codeNormals: new Set(codeTerms.map(normalizeSourceText)),
+      scopeIndexes,
+    };
+  }
+
+  const fingerprintFields = getItemFingerprintFields(item);
+  const ranked = normalizedBlocks
+    .map((text, index) => {
+      const matchedFields = fingerprintFields
+        .map((field) => ({
+          key: field.key,
+          weight: field.weight,
+          matches: field.terms.filter(({ normalized }) => text.includes(normalized)),
+        }))
+        .filter((field) => field.matches.length > 0);
+      const matches = matchedFields.flatMap((field) => field.matches);
+      const hasDistinctiveMatch = matches.some(({ normalized }) => normalized.length >= 6
+        && !GENERIC_FINGERPRINT_TERMS.has(normalized));
+      const score = matches.reduce((sum, { normalized }) => {
+        const weight = GENERIC_FINGERPRINT_TERMS.has(normalized) ? 0.25 : 1;
+        return sum + Math.min(normalized.length, 40) ** 2 * weight;
+      }, 0);
+      const identityScore = matchedFields.reduce((sum, field) => sum + field.weight, 0);
+      return { index, matchedFields, matches, hasDistinctiveMatch, identityScore, score };
+    })
+    .filter((candidate) => candidate.matchedFields.length >= 2
+      && candidate.identityScore >= 7
+      && (candidate.matchedFields.length >= 3 || candidate.hasDistinctiveMatch))
+    .sort((a, b) => b.identityScore - a.identityScore
+      || b.matchedFields.length - a.matchedFields.length
+      || b.score - a.score);
+
+  const best = ranked[0];
+  if (!best) return { blocks, normalizedBlocks, mode: 'none', codeAnchors: [], scopeIndexes: new Set() };
+  const competing = ranked.find((candidate) => Math.abs(candidate.index - best.index) > 4);
+  if (competing && competing.identityScore === best.identityScore
+    && competing.matchedFields.length === best.matchedFields.length
+    && competing.score >= best.score * 0.92) {
+    return { blocks, normalizedBlocks, mode: 'none', codeAnchors: [], scopeIndexes: new Set() };
+  }
+
+  const scopeIndexes = new Set();
+  scopeIndexes.add(best.index);
+  return {
+    blocks,
+    normalizedBlocks,
+    mode: 'fingerprint',
+    fingerprintAnchor: best,
+    codeAnchors: [],
+    scopeIndexes,
+  };
+}
+
+// 清除上一次的段落与词语高亮。
 function clearHighlights() {
   modalMdText.querySelectorAll('mark.highlight').forEach((mark) => {
     mark.parentNode.replaceChild(document.createTextNode(mark.textContent), mark);
   });
+  modalMdText.querySelectorAll('.source-match').forEach((element) => element.classList.remove('source-match'));
+  modalSections.querySelectorAll('.searchable-field.active').forEach((element) => element.classList.remove('active'));
   modalMdText.normalize();
 }
 
 // 在单个文本节点内高亮所有匹配的关键词（不破坏 HTML 标签结构）
-function highlightInTextNode(textNode, keyword) {
+function highlightInTextNode(textNode, keyword, className = 'highlight') {
   const text = textNode.nodeValue;
   if (!text) return;
 
@@ -1276,7 +1874,7 @@ function highlightInTextNode(textNode, keyword) {
       fragment.appendChild(document.createTextNode(text.slice(lastIndex, idx)));
     }
     const mark = document.createElement('mark');
-    mark.className = 'highlight';
+    mark.className = className;
     mark.textContent = text.slice(idx, idx + keyword.length);
     fragment.appendChild(mark);
 
@@ -1291,13 +1889,85 @@ function highlightInTextNode(textNode, keyword) {
   textNode.parentNode.replaceChild(fragment, textNode);
 }
 
-// 在左侧文献中查找并高亮关键词，并平滑滚动到第一个匹配处
-function highlightKeyword(keyword) {
-  clearHighlights();
-  if (!keyword) return;
+function scoreSourceBlock(block, index, matcher, fieldTerms, aliases) {
+  const blockText = normalizeSourceText(block.textContent);
+  if (!blockText) return null;
+  const fieldMatches = fieldTerms.filter((term) => blockText.includes(normalizeSourceText(term)));
+  if (fieldMatches.length === 0) return null;
+  const exactValue = fieldTerms[0] && blockText.includes(normalizeSourceText(fieldTerms[0]));
+  const aliasMatches = aliases.filter((term) => blockText.includes(normalizeSourceText(term)));
+  const fieldScore = fieldMatches.reduce((sum, term) => sum + normalizeSourceText(term).length ** 2, 0);
+  const aliasScore = aliasMatches.length * 12;
+  const anchorDistance = matcher.mode === 'code'
+    ? Math.min(...matcher.codeAnchors.map((anchor) => Math.abs(anchor.index - index)))
+    : Math.abs(matcher.fingerprintAnchor.index - index);
+  const longestFieldMatch = Math.max(...fieldMatches.map((term) => normalizeSourceText(term).length));
+  if (matcher.mode === 'code' && longestFieldMatch <= 3 && anchorDistance > 3) return null;
+  if (matcher.mode === 'code' && anchorDistance > 1) {
+    const blockCodes = extractCodeTermsFromText(block.textContent).map(normalizeSourceText);
+    const hasCurrentCode = blockCodes.some((code) => [...matcher.codeNormals]
+      .some((currentCode) => code.includes(currentCode) || currentCode.includes(code)));
+    const hasForeignCode = blockCodes.some((code) => ![...matcher.codeNormals]
+      .some((currentCode) => code.includes(currentCode) || currentCode.includes(code)));
+    if (hasForeignCode && !hasCurrentCode) return null;
+  }
+  const anchorMatches = matcher.mode === 'code'
+    ? matcher.codeAnchors
+      .filter((anchor) => Math.abs(anchor.index - index) <= 2)
+      .map((anchor) => anchor.term)
+    : matcher.fingerprintAnchor.matches.map((match) => match.term);
 
+  return {
+    block,
+    index,
+    fieldMatches,
+    anchorMatches,
+    score: (exactValue ? 100000 : 0) + fieldScore * 100 + aliasScore
+      - anchorDistance * 800 - Math.min(blockText.length, 1200) / 30,
+  };
+}
+
+function findBestSourceBlock(fieldKey, value) {
+  const matcher = activeSourceMatcher || createSourceMatcherContext(activeModalItem);
+  activeSourceMatcher = matcher;
+  if (matcher.mode === 'none' || matcher.scopeIndexes.size === 0) return null;
+  const fieldTerms = getSearchTerms(value, fieldKey);
+  const aliases = FIELD_ALIASES[fieldKey] || [];
+  const ranked = [...matcher.scopeIndexes]
+    .map((index) => scoreSourceBlock(matcher.blocks[index], index, matcher, fieldTerms, aliases))
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+  return ranked[0] || null;
+}
+
+function updateSearchableFieldAvailability() {
+  modalSections.querySelectorAll('.searchable-field').forEach((field) => {
+    const fieldKey = field.dataset.fieldKey;
+    const value = field.dataset.searchValue || field.textContent.trim();
+    if (findBestSourceBlock(fieldKey, value)) return;
+    const text = document.createElement('span');
+    text.className = 'detail-value';
+    text.textContent = field.textContent;
+    text.title = '原文中未找到足够可靠的当前器物对应段落';
+    field.replaceWith(text);
+  });
+}
+
+function highlightSourceMatch(field, fieldKey, value) {
+  clearHighlights();
+  if (!value) return;
+
+  const match = findBestSourceBlock(fieldKey, value);
+  if (!match) {
+    field.classList.add('match-missing');
+    window.setTimeout(() => field.classList.remove('match-missing'), 900);
+    return;
+  }
+
+  field.classList.add('active');
+  match.block.classList.add('source-match');
   const walker = document.createTreeWalker(
-    modalMdText,
+    match.block,
     NodeFilter.SHOW_TEXT,
     {
       acceptNode(node) {
@@ -1310,35 +1980,37 @@ function highlightKeyword(keyword) {
     }
   );
 
-  // 先收集所有匹配的文本节点，再统一修改，避免遍历过程中改动 DOM
-  const matches = [];
+  const textNodes = [];
   let node;
   while ((node = walker.nextNode())) {
-    if (node.nodeValue && node.nodeValue.toLowerCase().includes(keyword.toLowerCase())) {
-      matches.push(node);
-    }
+    if (node.nodeValue) textNodes.push(node);
+  }
+  for (const term of match.fieldMatches.slice(0, 4)) {
+    textNodes
+      .filter((textNode) => textNode.isConnected && textNode.nodeValue.toLowerCase().includes(term.toLowerCase()))
+      .forEach((textNode) => highlightInTextNode(textNode, term, 'highlight field-highlight'));
+  }
+  for (const term of match.anchorMatches.slice(0, 2)) {
+    textNodes
+      .filter((textNode) => textNode.isConnected && textNode.nodeValue.toLowerCase().includes(term.toLowerCase()))
+      .forEach((textNode) => highlightInTextNode(textNode, term));
   }
 
-  if (matches.length === 0) {
-    console.log(`未在文献中找到关键词：${keyword}`);
-    return;
-  }
-
-  matches.forEach((textNode) => highlightInTextNode(textNode, keyword));
-
-  const firstMark = modalMdText.querySelector('mark.highlight');
-  if (firstMark) {
-    firstMark.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
+  const fieldMarks = [...match.block.querySelectorAll('mark.field-highlight')]
+    .sort((a, b) => normalizeSourceText(b.textContent).length - normalizeSourceText(a.textContent).length);
+  const scrollTarget = fieldMarks[0] || match.block.querySelector('mark.highlight') || match.block;
+  const scrollContainer = modalMdText.parentElement;
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const targetRect = scrollTarget.getBoundingClientRect();
+  const targetTop = targetRect.top - containerRect.top + scrollContainer.scrollTop;
+  scrollContainer.scrollTop = Math.max(0, targetTop - (scrollContainer.clientHeight - targetRect.height) / 2);
 }
 
 // 点击右侧可搜索字段值 → 高亮定位
 modalSections.addEventListener('click', (event) => {
   const field = event.target.closest('.searchable-field');
   if (!field) return;
-  const keyword = field.textContent.trim();
-  if (!keyword) return;
-  highlightKeyword(keyword);
+  highlightSourceMatch(field, field.dataset.fieldKey, field.dataset.searchValue || field.textContent.trim());
 });
 
 // ============ 卡片交互（事件委托）============
@@ -1367,6 +2039,25 @@ homeCardsContainer.addEventListener('keydown', (event) => {
   card.classList.toggle('flipped');
   card.setAttribute('aria-pressed', String(card.classList.contains('flipped')));
 });
+
+// 列表年代列点击排序
+if (periodTh) {
+  periodTh.addEventListener('click', togglePeriodSort);
+}
+
+// 卡片视图二级联动筛选
+if (filterDim && filterValueSel) {
+  filterDim.addEventListener('change', () => {
+    filterDimension = filterDim.value;
+    filterValue = '';
+    updateFilterValueOptions();
+    applyAllFilters();
+  });
+  filterValueSel.addEventListener('change', () => {
+    filterValue = filterValueSel.value;
+    applyAllFilters();
+  });
+}
 
 // 启动加载
 loadCards();
