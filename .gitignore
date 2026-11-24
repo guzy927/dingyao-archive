@@ -9,3 +9,8 @@ outputs/
 # Local verification artifacts.
 _verify.txt
 offline-file-test.png
+
+# Temporary package downloads used to refresh vendored browser dependencies.
+Offline_Build/npm-cache/
+Offline_Build/vendor-download/
+Offline_Build/vendor-extract/

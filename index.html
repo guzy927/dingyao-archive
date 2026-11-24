@@ -5,10 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>定窑瓷器数字档案</title>
   <link rel="stylesheet" href="style.css?v=20241103b" />
-  <!-- ECharts CDN（后续用于地图图表） -->
-  <script defer src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
-  <!-- marked.js CDN（Markdown 渲染） -->
-  <script defer src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
 </head>
 <body>
   <!-- 全局加载遮罩 -->
@@ -163,7 +159,11 @@
     </div>
   </div>
 
-  <script src="offline-data.js"></script>
-  <script src="script.js?v=20261124f"></script>
+  <!-- 核心依赖均随项目发布，避免部分网络无法访问公共 CDN。 -->
+  <script src="vendor/echarts.min.js?v=5.5.1"></script>
+  <script src="vendor/marked.min.js?v=4.3.0"></script>
+  <script src="vendor/maps.js?v=20261124"></script>
+  <script src="offline-data.js?v=20261124"></script>
+  <script src="script.js?v=20261124g"></script>
 </body>
 </html>

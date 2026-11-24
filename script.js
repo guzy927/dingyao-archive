@@ -677,50 +677,26 @@ function renderCategoryChart() {
   });
 }
 
-// 加载世界地图 GeoJSON（带备用源）
+// 加载随项目发布的世界地图 GeoJSON；使用脚本全局变量以兼容 file:// 双击打开。
 let worldGeoJson = null;
 async function loadWorldMap() {
   if (worldGeoJson) return worldGeoJson;
-
-  const urls = [
-    'https://cdn.jsdelivr.net/npm/echarts@4.9.0/map/json/world.json',
-    'https://fastly.jsdelivr.net/npm/echarts@4.9.0/map/json/world.json',
-  ];
-
-  for (const url of urls) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      worldGeoJson = await res.json();
-      return worldGeoJson;
-    } catch (e) {
-      // 尝试下一个源
-    }
+  if (window.__DINGYAO_WORLD_MAP__) {
+    worldGeoJson = window.__DINGYAO_WORLD_MAP__;
+    return worldGeoJson;
   }
-  throw new Error('无法加载世界地图数据，请检查网络');
+  throw new Error('项目内置的世界地图数据未加载');
 }
 
-// 加载中国地图 GeoJSON（带备用源，用于叠加省份边界）
+// 加载随项目发布的中国地图 GeoJSON（用于叠加省份边界）。
 let chinaGeoJson = null;
 async function loadChinaMap() {
   if (chinaGeoJson) return chinaGeoJson;
-
-  const urls = [
-    'https://cdn.jsdelivr.net/npm/echarts@4.9.0/map/json/china.json',
-    'https://fastly.jsdelivr.net/npm/echarts@4.9.0/map/json/china.json',
-  ];
-
-  for (const url of urls) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      chinaGeoJson = await res.json();
-      return chinaGeoJson;
-    } catch (e) {
-      // 尝试下一个源
-    }
+  if (window.__DINGYAO_CHINA_MAP__) {
+    chinaGeoJson = window.__DINGYAO_CHINA_MAP__;
+    return chinaGeoJson;
   }
-  throw new Error('无法加载中国地图数据，请检查网络');
+  throw new Error('项目内置的中国地图数据未加载');
 }
 
 // 地图状态

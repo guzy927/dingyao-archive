@@ -3,7 +3,8 @@ import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
 const edge = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const port = 9231;
+const port = 9300 + Math.floor(Math.random() * 500);
+const profileDirectory = path.join(root, `.edge-file-verify-${port}`);
 const pageUrl = process.argv[2] || `file:///${path.join(root, 'index.html').replaceAll('\\', '/')}`;
 
 const edgeProcess = spawn(edge, [
@@ -12,7 +13,7 @@ const edgeProcess = spawn(edge, [
   '--no-first-run',
   '--disable-extensions',
   `--remote-debugging-port=${port}`,
-  `--user-data-dir=${path.join(root, '.edge-file-verify')}`,
+  `--user-data-dir=${profileDirectory}`,
   pageUrl,
 ], { stdio: 'ignore', windowsHide: true });
 
@@ -95,7 +96,23 @@ try {
     matchedText: document.querySelector('#modal-md-text .source-match')?.innerText.slice(0, 500) || '',
     marks: [...document.querySelectorAll('#modal-md-text mark')].map((mark) => mark.textContent)
   }))()`);
-  console.log(JSON.stringify({ homepage, detail, highlight }));
+  await evaluate(page.webSocketDebuggerUrl, `(() => {
+    document.querySelector('#modal-close')?.click();
+    document.querySelector('#toggle-data-btn')?.click();
+    return true;
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  const charts = await evaluate(page.webSocketDebuggerUrl, `(() => ({
+    dataViewVisible: !document.querySelector('#data-view')?.hidden,
+    dependencyVersion: window.echarts?.version || '',
+    mapsReady: Boolean(window.__DINGYAO_WORLD_MAP__ && window.__DINGYAO_CHINA_MAP__),
+    chartCanvases: document.querySelectorAll('#data-view canvas').length,
+    chartSvgs: document.querySelectorAll('#data-view svg').length,
+    visibleErrors: [...document.querySelectorAll('#data-view .error')].map((node) => node.textContent),
+    populatedCharts: [...document.querySelectorAll('#data-view .chart')]
+      .filter((node) => node.childElementCount > 0).length
+  }))()`);
+  console.log(JSON.stringify({ homepage, detail, highlight, charts }));
 } finally {
   try {
     const version = await waitForJson(`http://127.0.0.1:${port}/json/version`);
